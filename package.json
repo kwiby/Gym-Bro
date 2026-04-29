@@ -7,11 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "postinstall": "node -e \"require('fs').writeFileSync('node_modules/@mediapipe/tasks-vision/vision_bundle_mjs.js.map', JSON.stringify({version:3,sources:[],mappings:''}))\" "
+    "preview": "vite preview"
   },
   "dependencies": {
-    "@mediapipe/tasks-vision": "^0.10.35",
+    "@mediapipe/pose": "^0.5.1675469404",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },

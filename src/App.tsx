@@ -41,37 +41,51 @@ export default function App() {
 
   return (
     <div className="shell">
-      <header className="topbar">
-        <div className="topbar-left">
-          <h1>Pose Tracker</h1>
-          <span className="badge">
-            {modelStatus === 'loading' ? 'Loading model…'
-              : modelStatus === 'error' ? 'Model error'
-              : delegate ? `MediaPipe · ${delegate}`
-              : 'Ready'}
-          </span>
+      <header className="hero">
+        <div className="hero-copy">
+          <span className="eyebrow">Live MediaPipe Demo</span>
+          <h1>See your pose tracked live in the browser.</h1>
+          <p>
+            This page opens your camera, runs MediaPipe pose detection in real time,
+            and draws the full landmark skeleton directly over the video feed.
+          </p>
+          <div className="hero-actions">
+            <button
+              className={isLive ? 'btn-stop' : 'btn-start'}
+              onClick={isLive ? stopCamera : startCamera}
+              disabled={isLoading || !isReady}
+            >
+              {isLive ? 'Turn camera off'
+                : cameraStatus === 'starting' ? 'Turning camera on…'
+                : modelStatus === 'loading' ? 'Loading model…'
+                : 'Turn camera on'}
+            </button>
+
+            <span className="badge">
+              {modelStatus === 'loading' ? 'Loading model…'
+                : modelStatus === 'error' ? 'Model error'
+                : delegate ? `MediaPipe · ${delegate}`
+                : 'Model ready'}
+            </span>
+          </div>
         </div>
-        <div className="topbar-right">
-          <button
-            className={isLive ? 'btn-stop' : 'btn-start'}
-            onClick={isLive ? stopCamera : startCamera}
-            disabled={isLoading || !isReady}
-          >
-            {isLive ? 'Stop camera'
-              : cameraStatus === 'starting' ? 'Starting…'
-              : modelStatus === 'loading' ? 'Loading model…'
-              : 'Start camera'}
-          </button>
+
+        <div className="hero-notes">
+          <div className="note-card">
+            <strong>Best results</strong>
+            <span>Stand far enough back to fit your full body in frame.</span>
+          </div>
+          <div className="note-card">
+            <strong>Camera control</strong>
+            <span>Use the button to switch the live camera feed on or off anytime.</span>
+          </div>
         </div>
       </header>
 
       <div className="workspace">
-        {/* ── Live video + skeleton overlay ── */}
         <div className="viewer">
           <div className="stage">
-            {/* Hidden video element — source for canvas rendering and pose detection */}
             <video ref={videoRef} className="hidden-video" playsInline muted />
-            {/* Canvas shows camera feed + skeleton lines drawn on top */}
             <canvas ref={canvasRef} className="canvas" />
 
             {!isLive && (
@@ -80,14 +94,14 @@ export default function App() {
                   ? <><strong>Camera error</strong><span>{cameraError}</span></>
                   : modelError
                     ? <><strong>Model error</strong><span>{modelError}</span></>
-                    : <><strong>No camera feed</strong><span>Press Start camera to begin tracking.</span></>}
+                    : <><strong>Camera is off</strong><span>Turn the camera on to start live pose tracking.</span></>}
               </div>
             )}
           </div>
 
           <div className="viewer-footer">
             <span className={`status-dot ${isLive ? 'live' : ''}`} />
-            <span>{isLive ? 'Live' : 'Stopped'}</span>
+            <span>{isLive ? 'Camera live' : 'Camera off'}</span>
             {poseData && (
               <span className="pose-status">· Pose detected</span>
             )}
@@ -97,11 +111,10 @@ export default function App() {
           </div>
         </div>
 
-        {/* ── Live joint data panel ── */}
         <aside className="data-panel">
           <div className="panel-header">
             <span className="panel-title">Live joint data</span>
-            <span className="panel-sub">Updates as you move</span>
+            <span className="panel-sub">Mirrored browser coordinates updating frame by frame</span>
           </div>
 
           {poseData ? (
