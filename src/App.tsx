@@ -199,6 +199,9 @@ function App() {
         return
       }
 
+      // Schedule next frame immediately so an error below never kills the loop
+      animationFrameRef.current = requestAnimationFrame(processFrame)
+
       const video = videoRef.current
       const canvas = canvasRef.current
       const poseLandmarker = poseLandmarkerRef.current
@@ -209,12 +212,10 @@ function App() {
         !poseLandmarker ||
         video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
       ) {
-        animationFrameRef.current = requestAnimationFrame(processFrame)
         return
       }
 
       if (video.currentTime === lastVideoTimeRef.current) {
-        animationFrameRef.current = requestAnimationFrame(processFrame)
         return
       }
 
@@ -231,7 +232,6 @@ function App() {
       const ctx = canvas.getContext('2d')
 
       if (!ctx) {
-        animationFrameRef.current = requestAnimationFrame(processFrame)
         return
       }
 
@@ -242,9 +242,16 @@ function App() {
       ctx.drawImage(video, 0, 0, w, h)
       ctx.restore()
 
-      // Detect pose on the current frame
-      const result = poseLandmarker.detectForVideo(video, performance.now())
-      const landmarks = result.landmarks[0]
+      // Detect pose — wrapped so a bad frame never stops the loop
+      let landmarks: ReturnType<typeof poseLandmarker.detectForVideo>['landmarks'][0]
+
+      try {
+        const result = poseLandmarker.detectForVideo(video, performance.now())
+        landmarks = result.landmarks[0]
+      } catch {
+        return
+      }
+
       const visibleCount = countVisibleLandmarks(landmarks)
 
       // Draw skeleton on top of the mirrored video (drawPose also mirrors x)
@@ -255,8 +262,6 @@ function App() {
       setLandmarkCount(visibleCount)
       setPoseVisible(visibleCount >= 6)
       setAnalysis(nextAnalysis)
-
-      animationFrameRef.current = requestAnimationFrame(processFrame)
     }
 
     animationFrameRef.current = requestAnimationFrame(processFrame)
