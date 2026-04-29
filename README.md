@@ -1,2 +1,2 @@
 # Gym Bro
-[ConHacks 2026]https://conhacks.io/
+[ConHacks 2026](https://conhacks.io/)
