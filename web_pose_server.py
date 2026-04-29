@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import random
 import threading
 import time
 from collections import Counter
@@ -19,6 +20,7 @@ PORT = 8000
 FRAME_BOUNDARY = b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
 CAMERA_INDICES = (0, 1, 2)
 CAMERA_WARMUP_FRAMES = 30
+COMBO_WINDOW_MS = 5000
 ELEVENLABS_VOICE_ID = os.getenv('ELEVENLABS_VOICE_ID', '21m00Tcm4TlvDq8ikWAM')
 ELEVENLABS_MODEL_ID = os.getenv('ELEVENLABS_MODEL_ID', 'eleven_multilingual_v2')
 SUPPORTED_EXERCISES = {
@@ -30,9 +32,39 @@ SUPPORTED_EXERCISES = {
     'lunge': 'Lunge',
 }
 DEFAULT_EXERCISE = 'squat'
+SESSION_DURATION_OPTIONS = {
+    '60': {'label': '1 minute', 'seconds': 60},
+    '120': {'label': '2 minutes', 'seconds': 120},
+}
 SUPPORTED_EXERCISE_OPTIONS = [
     {'value': value, 'label': label}
     for value, label in SUPPORTED_EXERCISES.items()
+]
+SESSION_DURATION_SELECT_OPTIONS = [
+    {'value': value, 'label': option['label']}
+    for value, option in SESSION_DURATION_OPTIONS.items()
+]
+GOOD_FORM_LINES = [
+    'That rep looked sharp. Keep stacking clean ones like that.',
+    'Very solid form. That is the kind of rep worth repeating.',
+    'Nice work. You moved that rep with real control.',
+    'That was clean. Keep owning the movement like that.',
+    'Strong rep. You actually made that look athletic.',
+    'Good form there. Stay locked in and repeat it.',
+    'That was crisp. Keep the same rhythm on the next one.',
+    'Excellent rep. Controlled, clean, and confident.',
+    'That looked legit. More of that, less chaos.',
+]
+BAD_FORM_LINES = [
+    'That rep was a little suspicious. Let us aim for exercise, not interpretive dance.',
+    'Bold attempt. Your form looked like it was assembled during a power outage.',
+    'That was rough. I have seen sturdier mechanics in a shopping cart.',
+    'Not your cleanest work. That rep had the structural integrity of wet toast.',
+    'That form wandered off halfway through the movement. Please bring it back.',
+    'Messy rep. Your joints were freelancing out there.',
+    'That one looked confused. Commit to the movement before it files a complaint.',
+    'Yikes. That rep had all the grace of a folding chair in a windstorm.',
+    'That form needs help. Right now it is more chaos than coaching success.',
 ]
 POLL_NAMES = {
     0: 'nose',
@@ -60,6 +92,10 @@ def exercise_label(exercise: str) -> str:
 def build_rep_prompt(exercise: str) -> str:
     label = exercise_label(exercise)
     return f"Do exactly one {label.lower()} rep. I will watch that one rep, then lock your feedback so it stays clear."
+
+
+def session_duration_label(duration_key: str) -> str:
+    return SESSION_DURATION_OPTIONS.get(duration_key, SESSION_DURATION_OPTIONS['60'])['label']
 
 
 def open_camera() -> tuple[Any | None, str | None]:
@@ -183,11 +219,37 @@ HTML_PAGE = """<!doctype html>
         line-height: 1.5;
       }
       .stream-wrap {
+        position: relative;
         margin: 0 22px 22px;
         background: #02070d;
         border-radius: 18px;
         overflow: hidden;
         border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .combo-burst {
+        position: absolute;
+        left: 50%;
+        top: 18%;
+        transform: translate(-50%, -50%) scale(0.8);
+        padding: 14px 20px;
+        border-radius: 999px;
+        background: rgba(92, 249, 170, 0.92);
+        color: #07111f;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        opacity: 0;
+        pointer-events: none;
+        box-shadow: 0 18px 40px rgba(92, 249, 170, 0.35);
+      }
+      .combo-burst.show {
+        animation: combo-pop 900ms ease forwards;
+      }
+      @keyframes combo-pop {
+        0% { opacity: 0; transform: translate(-50%, -50%) scale(0.72); }
+        18% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+        70% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        100% { opacity: 0; transform: translate(-50%, -64%) scale(1.04); }
       }
       img {
         width: 100%;
@@ -282,6 +344,12 @@ HTML_PAGE = """<!doctype html>
       .control-block {
         margin: 0 0 16px;
       }
+      .control-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin: 0 0 16px;
+      }
       .control-label {
         display: block;
         margin: 0 0 8px;
@@ -298,6 +366,34 @@ HTML_PAGE = """<!doctype html>
         font: inherit;
         color: #07111f;
         background: #f4f7fb;
+      }
+      .session-box {
+        margin: 0 0 16px;
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 196, 107, 0.24);
+        background: rgba(255, 196, 107, 0.08);
+      }
+      .session-box h2 {
+        margin: 0 0 6px;
+        font-size: 18px;
+      }
+      .session-stats {
+        display: grid;
+        gap: 8px;
+        margin: 12px 0 0;
+      }
+      .session-stat {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        color: #dce6f2;
+        font-size: 13px;
+      }
+      .high-score-list {
+        margin: 12px 0 0;
+        padding-left: 18px;
+        color: #dce6f2;
       }
       .voice-button {
         border: 0;
@@ -325,6 +421,22 @@ HTML_PAGE = """<!doctype html>
         cursor: pointer;
       }
       .coach-button[disabled] {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .session-button {
+        width: 100%;
+        margin: 0 0 16px;
+        border: 0;
+        border-radius: 14px;
+        padding: 12px 14px;
+        font: inherit;
+        font-weight: 700;
+        color: #07111f;
+        background: linear-gradient(135deg, #ffc46b, #ff8f8f);
+        cursor: pointer;
+      }
+      .session-button[disabled] {
         opacity: 0.55;
         cursor: not-allowed;
       }
@@ -365,6 +477,7 @@ HTML_PAGE = """<!doctype html>
           </p>
         </div>
         <div class="stream-wrap">
+          <div id="combo-burst" class="combo-burst"></div>
           <img src="/stream.mjpg" alt="Live pose stream" />
         </div>
       </section>
@@ -382,10 +495,31 @@ HTML_PAGE = """<!doctype html>
           <label class="control-label" for="exercise-select">Exercise to score</label>
           <select id="exercise-select" class="exercise-select"></select>
         </div>
+        <div class="control-grid">
+          <div class="control-block">
+            <label class="control-label" for="session-duration-select">Combo session length</label>
+            <select id="session-duration-select" class="exercise-select"></select>
+          </div>
+          <div class="control-block">
+            <label class="control-label">High score</label>
+            <div class="stat"><span>Best combo</span><strong id="combo-high-score">0</strong></div>
+          </div>
+        </div>
         <div class="voice-row">
           <button id="voice-toggle" class="voice-button" type="button">Enable voice</button>
           <span id="voice-status" class="muted">Voice unavailable</span>
         </div>
+        <section id="session-box" class="session-box">
+          <h2>Combo Training</h2>
+          <p id="session-message">Start a timed session and chain good reps within 5 seconds to build your combo.</p>
+          <div class="session-stats">
+            <div class="session-stat"><span>Live combo</span><strong id="combo-count">0</strong></div>
+            <div class="session-stat"><span>Session best</span><strong id="combo-best">0</strong></div>
+            <div class="session-stat"><span>Time left</span><strong id="session-time-remaining">--:--</strong></div>
+          </div>
+          <ul id="high-score-list" class="high-score-list"></ul>
+        </section>
+        <button id="session-button" class="session-button" type="button">Start combo session</button>
         <section id="coach-box" class="coach-box">
           <h2 id="coach-title">Pick an exercise, then start a one-rep check.</h2>
           <p id="coach-message">Do exactly one rep when the app is watching. It will lock the feedback after that rep so nothing gets overwritten.</p>
@@ -405,7 +539,16 @@ HTML_PAGE = """<!doctype html>
       const landmarkCountEl = document.getElementById('landmark-count')
       const selectedExerciseEl = document.getElementById('selected-exercise')
       const repCountEl = document.getElementById('rep-count')
+      const comboBurstEl = document.getElementById('combo-burst')
       const exerciseSelectEl = document.getElementById('exercise-select')
+      const sessionDurationSelectEl = document.getElementById('session-duration-select')
+      const comboHighScoreEl = document.getElementById('combo-high-score')
+      const comboCountEl = document.getElementById('combo-count')
+      const comboBestEl = document.getElementById('combo-best')
+      const sessionTimeRemainingEl = document.getElementById('session-time-remaining')
+      const sessionMessageEl = document.getElementById('session-message')
+      const highScoreListEl = document.getElementById('high-score-list')
+      const sessionButtonEl = document.getElementById('session-button')
       const coachTitleEl = document.getElementById('coach-title')
       const coachMessageEl = document.getElementById('coach-message')
       const coachButtonEl = document.getElementById('coach-button')
@@ -418,8 +561,12 @@ HTML_PAGE = """<!doctype html>
       let lastVoiceVersion = 0
       let latestVoiceVersion = 0
       let optionSignature = ''
+      let durationOptionSignature = ''
       let queuedVoiceVersion = 0
       let voiceStatusOverride = ''
+      let lastComboEventVersion = 0
+      let comboBurstTimeout = 0
+      let audioContext = null
 
       function updateVoiceStatus(serverStatus) {
         voiceStatusEl.textContent = voiceStatusOverride || serverStatus || 'Voice unavailable'
@@ -445,6 +592,83 @@ HTML_PAGE = """<!doctype html>
 
       function renderJoint(name, joint) {
         return `<div class="joint"><strong>${name}</strong><br><span class="muted">x ${joint.x.toFixed(3)} · y ${joint.y.toFixed(3)} · z ${joint.z.toFixed(3)} · vis ${Math.round(joint.visibility * 100)}%</span></div>`
+      }
+
+      function formatRemaining(ms) {
+        const totalSeconds = Math.max(0, Math.ceil((ms || 0) / 1000))
+        const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0')
+        const seconds = String(totalSeconds % 60).padStart(2, '0')
+        return `${minutes}:${seconds}`
+      }
+
+      function syncDurationOptions(payload) {
+        const options = payload.sessionDurationOptions || []
+        const nextSignature = JSON.stringify(options)
+        if (nextSignature !== durationOptionSignature) {
+          durationOptionSignature = nextSignature
+          sessionDurationSelectEl.innerHTML = options
+            .map((option) => `<option value="${option.value}">${option.label}</option>`)
+            .join('')
+        }
+
+        if (payload.sessionDurationKey) {
+          sessionDurationSelectEl.value = payload.sessionDurationKey
+        }
+      }
+
+      function playComboSound() {
+        const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+        if (!AudioContextCtor) {
+          return
+        }
+
+        if (!audioContext) {
+          audioContext = new AudioContextCtor()
+        }
+
+        if (audioContext.state === 'suspended') {
+          audioContext.resume().catch(() => {})
+        }
+
+        const now = audioContext.currentTime
+        const oscillator = audioContext.createOscillator()
+        const gain = audioContext.createGain()
+        oscillator.type = 'triangle'
+        oscillator.frequency.setValueAtTime(660, now)
+        oscillator.frequency.exponentialRampToValueAtTime(990, now + 0.14)
+        gain.gain.setValueAtTime(0.0001, now)
+        gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02)
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24)
+        oscillator.connect(gain)
+        gain.connect(audioContext.destination)
+        oscillator.start(now)
+        oscillator.stop(now + 0.25)
+      }
+
+      function showComboBurst(comboCount, exerciseLabel) {
+        window.clearTimeout(comboBurstTimeout)
+        comboBurstEl.classList.remove('show')
+        void comboBurstEl.offsetWidth
+        comboBurstEl.textContent = comboCount > 1 ? `${comboCount}x combo` : `${exerciseLabel} clean hit`
+        comboBurstEl.classList.add('show')
+        comboBurstTimeout = window.setTimeout(() => {
+          comboBurstEl.classList.remove('show')
+        }, 950)
+        playComboSound()
+      }
+
+      function renderHighScores(highScores, selectedDurationKey) {
+        const options = [
+          { key: '60', label: '1 minute' },
+          { key: '120', label: '2 minutes' },
+        ]
+        highScoreListEl.innerHTML = options
+          .map((option) => {
+            const score = highScores?.[option.key] || 0
+            const active = option.key === selectedDurationKey ? ' <span class="muted">(selected)</span>' : ''
+            return `<li>${option.label}: <strong>${score}</strong>${active}</li>`
+          })
+          .join('')
       }
 
       async function playVoiceVersion(version) {
@@ -525,16 +749,34 @@ HTML_PAGE = """<!doctype html>
           landmarkCountEl.textContent = String(payload.landmarkCount || 0)
           selectedExerciseEl.textContent = payload.selectedExerciseLabel || 'Exercise'
           repCountEl.textContent = String(payload.repCount || 0)
+          comboCountEl.textContent = String(payload.comboCount || 0)
+          comboBestEl.textContent = String(payload.comboBestCurrent || 0)
+          comboHighScoreEl.textContent = String((payload.comboHighScores || {})[payload.sessionDurationKey] || 0)
+          sessionTimeRemainingEl.textContent = formatRemaining(payload.sessionRemainingMs)
+          sessionMessageEl.textContent = payload.sessionActive
+            ? `Session live. Hit another good rep within 5 seconds to keep the combo climbing.`
+            : `Start a ${payload.sessionDurationLabel || '1 minute'} session and chain good reps within 5 seconds to build your combo.`
+          sessionButtonEl.textContent = payload.sessionActive
+            ? `Session running: ${formatRemaining(payload.sessionRemainingMs)}`
+            : 'Start combo session'
+          sessionButtonEl.disabled = Boolean(payload.sessionActive)
           coachTitleEl.textContent = payload.coachTitle || 'One-rep coaching'
           coachMessageEl.textContent = payload.coachMessage || ''
           coachButtonEl.textContent = payload.coachButtonLabel || 'Start one-rep check'
           coachButtonEl.disabled = Boolean(payload.coachButtonDisabled)
           syncExerciseOptions(payload)
+          syncDurationOptions(payload)
+          renderHighScores(payload.comboHighScores, payload.sessionDurationKey)
           analysisEl.className = `analysis ${payload.analysis?.feedback?.tone || 'neutral'}`
           analysisEl.innerHTML = renderAnalysis(payload.analysis)
           voiceToggleEl.disabled = !payload.voice?.available
           latestVoiceVersion = payload.voice?.version || 0
           updateVoiceStatus(payload.voice?.status)
+
+          if (payload.comboEventVersion && payload.comboEventVersion !== lastComboEventVersion) {
+            lastComboEventVersion = payload.comboEventVersion
+            showComboBurst(payload.comboEventCount || 1, payload.comboEventLabel || 'Exercise')
+          }
 
           if (voiceEnabled && payload.voice?.available && payload.voice?.version && payload.voice.version !== lastVoiceVersion) {
             if (!audioEl.paused && !audioEl.ended) {
@@ -561,6 +803,28 @@ HTML_PAGE = """<!doctype html>
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ exercise: exerciseSelectEl.value }),
+          })
+        } catch (error) {
+        }
+      })
+
+      sessionDurationSelectEl.addEventListener('change', async () => {
+        try {
+          await fetch('/session/duration', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ duration: sessionDurationSelectEl.value }),
+          })
+        } catch (error) {
+        }
+      })
+
+      sessionButtonEl.addEventListener('click', async () => {
+        try {
+          await fetch('/session/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ duration: sessionDurationSelectEl.value, exercise: exerciseSelectEl.value }),
           })
         } catch (error) {
         }
@@ -805,10 +1069,12 @@ def build_spoken_feedback(analysis: dict[str, Any]) -> str | None:
     label = analysis.get('exerciseLabel', 'exercise')
 
     if tone in {'warn', 'bad'} and details:
-        return f"{label} check. {title}. {details[0]}"
+        opener = random.choice(BAD_FORM_LINES)
+        return f"{opener} {label} check. {title}. {details[0]}"
 
     if tone == 'good' and details:
-        return f"Good {label.lower()} form. {details[0]}"
+        opener = random.choice(GOOD_FORM_LINES)
+        return f"{opener} {label} check. {details[0]}"
 
     return None
 
@@ -858,6 +1124,118 @@ def aggregate_rep_samples(samples: list[dict[str, Any]], selected_exercise: str)
         'details': details,
     }
     return base
+
+
+class SessionTracker:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.selected_duration_key = '60'
+        self.high_scores = {key: 0 for key in SESSION_DURATION_OPTIONS}
+        self.active = False
+        self.started_at = 0
+        self.ends_at = 0
+        self.combo = 0
+        self.best_combo = 0
+        self.last_good_rep_at = 0
+        self.last_stage = 'unknown'
+        self.seen_bottom = False
+        self.event_version = 0
+        self.event_combo = 0
+        self.event_label = ''
+
+    def snapshot(self, now_ms: int | None = None) -> dict[str, Any]:
+        with self.lock:
+            remaining_ms = 0
+            if self.active:
+                current_time = now_ms or int(time.time() * 1000)
+                remaining_ms = max(0, self.ends_at - current_time)
+
+            return {
+                'sessionActive': self.active,
+                'sessionDurationKey': self.selected_duration_key,
+                'sessionDurationLabel': session_duration_label(self.selected_duration_key),
+                'sessionDurationOptions': SESSION_DURATION_SELECT_OPTIONS,
+                'sessionRemainingMs': remaining_ms,
+                'comboCount': self.combo,
+                'comboBestCurrent': self.best_combo,
+                'comboHighScores': dict(self.high_scores),
+                'comboEventVersion': self.event_version,
+                'comboEventCount': self.event_combo,
+                'comboEventLabel': self.event_label,
+            }
+
+    def select_duration(self, duration_key: str) -> bool:
+        if duration_key not in SESSION_DURATION_OPTIONS:
+            return False
+
+        with self.lock:
+            self.selected_duration_key = duration_key
+        return True
+
+    def start_session(self, duration_key: str, now_ms: int) -> bool:
+        if duration_key not in SESSION_DURATION_OPTIONS:
+            return False
+
+        with self.lock:
+            duration_seconds = SESSION_DURATION_OPTIONS[duration_key]['seconds']
+            self.selected_duration_key = duration_key
+            self.active = True
+            self.started_at = now_ms
+            self.ends_at = now_ms + (duration_seconds * 1000)
+            self.combo = 0
+            self.best_combo = 0
+            self.last_good_rep_at = 0
+            self.last_stage = 'unknown'
+            self.seen_bottom = False
+            self.event_combo = 0
+            self.event_label = ''
+        return True
+
+    def update(self, analysis: dict[str, Any], now_ms: int) -> None:
+        with self.lock:
+            if not self.active:
+                return
+
+            if now_ms >= self.ends_at:
+                self._finish_session_locked()
+                return
+
+            if self.combo > 0 and self.last_good_rep_at and (now_ms - self.last_good_rep_at) > COMBO_WINDOW_MS:
+                self.combo = 0
+
+            stage = analysis.get('stage', 'unknown')
+            if stage == 'bottom':
+                self.seen_bottom = True
+
+            if stage == 'top' and self.last_stage != 'top' and self.seen_bottom:
+                self.seen_bottom = False
+                if analysis.get('feedback', {}).get('tone') == 'good':
+                    if self.last_good_rep_at and (now_ms - self.last_good_rep_at) <= COMBO_WINDOW_MS:
+                        self.combo += 1
+                    else:
+                        self.combo = 1
+
+                    self.last_good_rep_at = now_ms
+                    self.best_combo = max(self.best_combo, self.combo)
+                    duration_key = self.selected_duration_key
+                    self.high_scores[duration_key] = max(self.high_scores[duration_key], self.best_combo)
+                    self.event_version += 1
+                    self.event_combo = self.combo
+                    self.event_label = analysis.get('exerciseLabel', 'Exercise')
+                else:
+                    self.combo = 0
+
+            self.last_stage = stage
+
+            if now_ms >= self.ends_at:
+                self._finish_session_locked()
+
+    def _finish_session_locked(self) -> None:
+        self.active = False
+        self.combo = 0
+        self.last_good_rep_at = 0
+        self.last_stage = 'unknown'
+        self.seen_bottom = False
 
 
 class WorkoutTracker:
@@ -1338,6 +1716,17 @@ class PoseRuntime:
             'selectedExerciseLabel': exercise_label(DEFAULT_EXERCISE),
             'supportedExercises': SUPPORTED_EXERCISE_OPTIONS,
             'repCount': 0,
+            'sessionActive': False,
+            'sessionDurationKey': '60',
+            'sessionDurationLabel': session_duration_label('60'),
+            'sessionDurationOptions': SESSION_DURATION_SELECT_OPTIONS,
+            'sessionRemainingMs': 0,
+            'comboCount': 0,
+            'comboBestCurrent': 0,
+            'comboHighScores': {key: 0 for key in SESSION_DURATION_OPTIONS},
+            'comboEventVersion': 0,
+            'comboEventCount': 0,
+            'comboEventLabel': '',
             'voice': {
                 'available': False,
                 'status': 'Set ELEVENLABS_API_KEY to enable voice coaching.',
@@ -1378,6 +1767,17 @@ class PoseRuntime:
                 'selectedExerciseLabel': self.latest_payload.get('selectedExerciseLabel', exercise_label(DEFAULT_EXERCISE)),
                 'supportedExercises': self.latest_payload.get('supportedExercises', SUPPORTED_EXERCISE_OPTIONS),
                 'repCount': self.latest_payload.get('repCount', 0),
+                'sessionActive': self.latest_payload.get('sessionActive', False),
+                'sessionDurationKey': self.latest_payload.get('sessionDurationKey', '60'),
+                'sessionDurationLabel': self.latest_payload.get('sessionDurationLabel', session_duration_label('60')),
+                'sessionDurationOptions': self.latest_payload.get('sessionDurationOptions', SESSION_DURATION_SELECT_OPTIONS),
+                'sessionRemainingMs': self.latest_payload.get('sessionRemainingMs', 0),
+                'comboCount': self.latest_payload.get('comboCount', 0),
+                'comboBestCurrent': self.latest_payload.get('comboBestCurrent', 0),
+                'comboHighScores': self.latest_payload.get('comboHighScores', {key: 0 for key in SESSION_DURATION_OPTIONS}),
+                'comboEventVersion': self.latest_payload.get('comboEventVersion', 0),
+                'comboEventCount': self.latest_payload.get('comboEventCount', 0),
+                'comboEventLabel': self.latest_payload.get('comboEventLabel', ''),
                 'voice': self.latest_payload.get('voice', {
                     'available': False,
                     'status': 'Set ELEVENLABS_API_KEY to enable voice coaching.',
@@ -1447,8 +1847,10 @@ class VoiceManager:
 
 runtime = PoseRuntime()
 workout_tracker = WorkoutTracker()
+session_tracker = SessionTracker()
 voice_manager = VoiceManager()
 runtime.latest_payload.update(workout_tracker.snapshot())
+runtime.latest_payload.update(session_tracker.snapshot())
 runtime.latest_payload['voice'] = voice_manager.snapshot()
 
 
@@ -1493,12 +1895,14 @@ def capture_loop() -> None:
                     joints = build_joint_payload(result)
                     analysis = analyze_pose(result, selected_exercise)
                     locked_analysis, voice_text = workout_tracker.update(analysis)
+                    session_tracker.update(analysis, timestamp_ms)
                     if voice_text:
                         voice_manager.request(voice_text)
 
                     published_analysis = locked_analysis or workout_tracker.displayed_analysis()
 
                     tracker_snapshot = workout_tracker.snapshot()
+                    session_snapshot = session_tracker.snapshot(timestamp_ms)
                     payload = {
                         'status': 'Camera live' if joints else 'Searching for pose...',
                         'error': '',
@@ -1509,6 +1913,7 @@ def capture_loop() -> None:
                         'joints': joints,
                         'analysis': published_analysis,
                         **tracker_snapshot,
+                        **session_snapshot,
                         'voice': voice_manager.snapshot(),
                     }
                     runtime.update(jpeg.tobytes(), payload)
@@ -1540,6 +1945,12 @@ class PoseRequestHandler(BaseHTTPRequestHandler):
             return
         if self.path == '/rep-check/start':
             self._start_rep_check()
+            return
+        if self.path == '/session/duration':
+            self._update_session_duration()
+            return
+        if self.path == '/session/start':
+            self._start_session()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -1581,6 +1992,7 @@ class PoseRequestHandler(BaseHTTPRequestHandler):
         tracker_snapshot = workout_tracker.snapshot()
         latest = runtime.snapshot()
         latest.update(tracker_snapshot)
+        latest.update(session_tracker.snapshot())
         latest['analysis'] = None
         runtime.update_payload(latest)
         self._write_json({'ok': True, **tracker_snapshot})
@@ -1605,9 +2017,56 @@ class PoseRequestHandler(BaseHTTPRequestHandler):
         tracker_snapshot = workout_tracker.snapshot()
         latest = runtime.snapshot()
         latest.update(tracker_snapshot)
+        latest.update(session_tracker.snapshot())
         latest['analysis'] = None
         runtime.update_payload(latest)
         self._write_json({'ok': True, **tracker_snapshot})
+
+    def _update_session_duration(self) -> None:
+        content_length = int(self.headers.get('Content-Length', '0'))
+        raw_body = self.rfile.read(content_length) if content_length else b'{}'
+
+        try:
+            payload = json.loads(raw_body.decode('utf-8'))
+        except json.JSONDecodeError:
+            self.send_error(HTTPStatus.BAD_REQUEST, 'Invalid JSON body')
+            return
+
+        duration_key = payload.get('duration')
+        if not isinstance(duration_key, str) or not session_tracker.select_duration(duration_key):
+            self.send_error(HTTPStatus.BAD_REQUEST, 'Unsupported session duration')
+            return
+
+        latest = runtime.snapshot()
+        latest.update(session_tracker.snapshot())
+        runtime.update_payload(latest)
+        self._write_json({'ok': True, **session_tracker.snapshot()})
+
+    def _start_session(self) -> None:
+        content_length = int(self.headers.get('Content-Length', '0'))
+        raw_body = self.rfile.read(content_length) if content_length else b'{}'
+
+        try:
+            payload = json.loads(raw_body.decode('utf-8'))
+        except json.JSONDecodeError:
+            self.send_error(HTTPStatus.BAD_REQUEST, 'Invalid JSON body')
+            return
+
+        exercise = payload.get('exercise')
+        if isinstance(exercise, str) and exercise in SUPPORTED_EXERCISES:
+            workout_tracker.select_exercise(exercise)
+
+        duration_key = payload.get('duration')
+        now_ms = int(time.time() * 1000)
+        if not isinstance(duration_key, str) or not session_tracker.start_session(duration_key, now_ms):
+            self.send_error(HTTPStatus.BAD_REQUEST, 'Unsupported session duration')
+            return
+
+        latest = runtime.snapshot()
+        latest.update(workout_tracker.snapshot())
+        latest.update(session_tracker.snapshot(now_ms))
+        runtime.update_payload(latest)
+        self._write_json({'ok': True, **session_tracker.snapshot(now_ms)})
 
     def _write_audio(self) -> None:
         body = voice_manager.audio()

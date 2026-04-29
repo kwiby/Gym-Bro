@@ -1,6 +1,6 @@
 # Project Context
 
-Read this file at the start of every new chat to restore full project context.
+Read this file at the start of every new chat to restore current project state.
 
 ---
 
@@ -12,171 +12,253 @@ Pose Tracker (repo: `Gym_bro`)
 
 - Remote: `https://github.com/AndrewLu-1/Gym_bro.git`
 - Active branch: `main`
-- `temp` branch holds the earlier, more complex version of the app
+- `temp` branch still holds older experimental app history
 
 ## What this project is
 
-A browser-based real-time pose tracking app. It uses the device webcam and MediaPipe to detect body landmarks, draws a live skeleton overlay on the video feed, and exposes all joint positions as typed React state that updates every frame as the user moves.
+This repo is now primarily a Python-served local workout coaching app.
 
-This started as a fitness coaching tool (exercise form checker with rep counting), went through a major rewrite into a dual-canvas MoCap system, then was reset to a clean minimal pose tracker on `main`.
+The backend:
+- opens the webcam from Python
+- runs MediaPipe Pose Landmarker locally
+- draws the skeleton onto each frame
+- streams MJPEG to the browser
+- scores a selected exercise
+- supports a locked one-rep coaching flow
+- supports a timed combo-training mode with per-duration highscores
+- optionally generates spoken coaching with ElevenLabs
+
+The React/Vite code in `src/` is older and still present, but it is not the main user flow now.
 
 ---
 
 ## Current state of `main`
 
 ### What works
-- Webcam opens and streams to a canvas element
-- Main branch is now a minimal browser pose tracker only — no squat logic, rep counting, or coaching features
-- Tracking uses the legacy browser `@mediapipe/pose` pipeline instead of `@mediapipe/tasks-vision`
-- Skeleton overlay draws on top of the live video — teal lines connecting joints, white/amber dots at each landmark
-- `PoseData` React state updates from MediaPipe pose results with named joint objects (`poseData.leftKnee.x`, `poseData.rightWrist.screenX`, etc.)
-- Right panel shows all 13 joint coordinates and visibility confidence live
 
-### Known fixed bugs (do not reintroduce)
-- **Stale hidden video element**: using `display: none` for the source video made the tracking path less reliable. Fixed by keeping the video mounted but visually hidden in `src/App.css`.
-- **Detection before video ready**: `play()` resolving does not guarantee `videoWidth` is non-zero. Fixed by awaiting a `loadedmetadata` promise before starting the loop, plus explicit video readiness guards.
-- **Pose visibility fallback**: missing `visibility` values caused weak UI/state behavior. Fixed to treat `visibility ?? 1` as visible.
-- **Old `tasks-vision` pipeline removed**: the previous `@mediapipe/tasks-vision` setup was replaced entirely after repeated user reports that it was not detecting anything. Do not reintroduce it casually on `main`.
-- **CDN asset version mismatch risk**: the new `@mediapipe/pose` loader now pins assets to the exact package version (`0.5.1675469404`) instead of using an unversioned CDN path.
-- **Unhelpful model error text**: the generic "check your connection and refresh" message was replaced with real runtime error text from the loader. If that old message appears, the user is running a stale dev server or stale browser tab.
+- Python server at `http://127.0.0.1:8000/`
+- Browser UI for live camera stream, status, joints, one-rep coaching, and combo training
+- Manual exercise selector instead of automatic exercise detection
+- Supported exercises:
+  - squat
+  - pushup
+  - bicep curl
+  - overhead press
+  - situp
+  - lunge
+- One-rep coaching flow:
+  - user starts a rep check
+  - app instructs the user to do one rep
+  - app captures that rep only
+  - feedback locks on screen until the next check starts
+- Voice coaching:
+  - optional ElevenLabs audio
+  - varied praise for good reps
+  - varied playful insults for bad reps
+  - browser retry path for autoplay-blocked audio
+- Combo training mode:
+  - session lengths of 1 minute and 2 minutes
+  - start-session button
+  - 5-second combo window for chaining good reps
+  - browser-generated success sound for good combo reps
+  - on-screen combo popup effect
+  - separate highscores per session length
+- Camera startup hardening:
+  - tries camera indices `0`, `1`, `2`
+  - prefers `cv2.CAP_DSHOW` on Windows
+  - waits for real frames before declaring startup success
+  - surfaces real startup errors instead of hanging forever on `Starting camera...`
 
----
+### Current rough edges
 
-## Architecture
-
-### Entry point
-`src/main.tsx` → `src/App.tsx`
-
-### Core hook: `src/hooks/usePoseTracking.ts`
-
-This file contains everything. Understand this file and you understand the whole app.
-
-**What it does:**
-1. Loads the browser `@mediapipe/pose` solution on mount using `window.Pose`
-2. Pins loader assets to `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/...`
-3. Configures pose options:
-   - `modelComplexity: 2`
-   - `smoothLandmarks: true`
-   - `enableSegmentation: false`
-   - `minDetectionConfidence: 0.35`
-   - `minTrackingConfidence: 0.35`
-4. `startCamera()` — requests webcam, awaits `loadedmetadata`, plays video, starts the rAF loop
-5. `stopCamera()` — tears down stream, cancels rAF, clears canvas
-6. `tick()` (rAF loop):
-   - waits for a fresh video frame
-   - avoids overlapping inference with `inferenceBusyRef`
-   - calls `await pose.send({ image: video })`
-7. `pose.onResults(...)`:
-   - draws mirrored video onto the canvas
-   - draws skeleton lines + dots over the frame
-   - updates `poseData` every other callback
-
-**Key types exported:**
-- `Joint` — `{ x, y, z, visibility, screenX, screenY }` — normalized coords + pixel position
-- `PoseData` — named joints (nose, leftShoulder, rightShoulder, leftElbow, rightElbow, leftWrist, rightWrist, leftHip, rightHip, leftKnee, rightKnee, leftAnkle, rightAnkle) + `raw` array + `capturedAt` timestamp
-- `ModelStatus` — `'loading' | 'ready' | 'error'`
-- `CameraStatus` — `'idle' | 'starting' | 'live' | 'error'`
-
-**Landmark indices used (MediaPipe Pose):**
-```
-nose: 0, leftShoulder: 11, rightShoulder: 12,
-leftElbow: 13, rightElbow: 14, leftWrist: 15, rightWrist: 16,
-leftHip: 23, rightHip: 24, leftKnee: 25, rightKnee: 26,
-leftAnkle: 27, rightAnkle: 28
-```
-
-**Skeleton connections drawn:**
-Left/right shoulder, shoulder–elbow, elbow–wrist, shoulder–hip, hip–hip, hip–knee, knee–ankle, nose–shoulder (both sides).
-
-**Visibility rule:** `(landmark.visibility ?? 1) >= threshold` — landmarks without a visibility value are treated as visible. Threshold is `0.1` for both lines and dots.
-
-**x-coordinate mirroring:** All draw calls use `(1 - landmark.x) * width` to mirror the skeleton to match the selfie-mode video.
-
-**Important runtime note:** if the UI still shows the old generic model error text, the user is not running the current code. Restart `npm run dev` and hard-refresh the browser.
-
-### `src/App.tsx`
-
-- Calls `usePoseTracking()`
-- Left side: canvas element showing video + skeleton
-- Right side: data panel with `JointRow` components showing live coords
-- Start/Stop camera button in the top bar
-- Badge still shows model status; `delegate` is currently always `null` in the new pipeline
-
-### `src/App.css` + `src/index.css`
-
-Dark theme (`#07111f` background). CSS variables in `index.css`:
-`--bg`, `--panel`, `--panel-alt`, `--border`, `--text-high`, `--text-soft`, `--accent` (`#5cf9aa`), `--accent-dim`.
+- Voice still depends on valid ElevenLabs credentials and browser playback permissions
+- Combo highscores are runtime-only; they are not persisted to disk yet
+- Exercise scoring is heuristic and angle-based, so edge cases depend on camera angle and visibility
+- The older Vite app docs and code still exist in the repo, but they are not the active product surface
 
 ---
 
-## Config files
+## Main architecture
 
-### `vite.config.ts`
-```ts
-plugins: [react()]
-```
-There is no longer any special Vite workaround for `@mediapipe/tasks-vision`, because that dependency was removed from `main`.
+### Primary entry point
 
-### `package.json`
-```json
-"dependencies": {
-  "@mediapipe/pose": "^0.5.1675469404"
-}
-```
-`@mediapipe/tasks-vision` and the old postinstall source-map stub were removed.
+`web_pose_server.py`
+
+This file now contains almost the entire active app.
+
+### Key responsibilities inside `web_pose_server.py`
+
+1. Serve a browser UI from an inline `HTML_PAGE` string
+2. Open and warm up the webcam from Python
+3. Run MediaPipe Pose on each frame
+4. Draw the pose skeleton and stream the resulting frames to `/stream.mjpg`
+5. Expose current state as JSON at `/pose.json`
+6. Accept browser POST actions for:
+   - `/exercise`
+   - `/rep-check/start`
+   - `/session/duration`
+   - `/session/start`
+7. Manage spoken feedback and audio bytes for `/coach-audio.mp3`
+
+### Important classes
+
+#### `WorkoutTracker`
+
+Handles the one-rep coaching flow.
+
+- Tracks selected exercise
+- Tracks rep count
+- Holds coach state: `idle`, `waiting`, `collecting`, `complete`
+- Collects analysis samples only for the current rep check
+- Locks and returns the final rep feedback after a completed rep
+
+#### `SessionTracker`
+
+Handles timed combo training.
+
+- Tracks selected session duration
+- Tracks active/inactive session state
+- Tracks combo count, current session best, and per-duration highscores
+- Requires a good rep within `COMBO_WINDOW_MS` to continue the combo
+- Emits combo event versions so the browser can trigger the popup/sound once per event
+
+#### `VoiceManager`
+
+Handles optional ElevenLabs speech generation.
+
+- Stores latest generated MP3 bytes
+- Exposes a version number so the browser knows when fresh audio exists
+- Avoids duplicate generation for identical text
+
+#### `PoseRuntime`
+
+Stores the latest frame and JSON payload shared across the HTTP handlers.
 
 ---
 
-## `temp` branch — what's there
+## Active UI behavior
 
-The `temp` branch has a much more complex version. Key things that exist there that could be merged back:
+The current UI is browser-rendered from the inline HTML inside `web_pose_server.py`.
 
-- `src/lib/feedback.ts` — squat and pushup form analysis (knee angle, torso lean, elbow angle, body line), rep counting, spoken voice cues
-- `src/lib/stage.ts` — procedural puppet character drawn from landmarks (torso quad, rounded limbs, hinge joints, head circle)
-- `src/lib/smoother.ts` — 7-frame causal moving average for real-time smoothing + symmetric centered average for export
-- `src/lib/exporter.ts` — JSON export and self-contained HTML player export
-- Recording/timeline system — record frames with timestamps, playback, export
-- Older, more complex pose/exercise app code that is intentionally not on `main`
+It includes:
+
+- live MJPEG stream image
+- status pill
+- frame size / timestamp / landmark count
+- selected exercise and rep count
+- exercise dropdown with black text on a light background
+- voice toggle
+- combo session duration dropdown with black text
+- combo session start button
+- live combo, session best, time remaining, and highscores
+- coach instruction box for the one-rep flow
+- start-one-rep button
+- analysis card that stays locked after the rep completes
+- joint coordinate list
+- animated combo burst overlay
+- browser-generated combo success sound
 
 ---
 
-## Likely next steps
+## Exercise analysis model
 
-1. **Verify runtime behavior in browser** — compile passes, but the user still needs to confirm the live tracker actually detects poses on their machine.
-2. **If model load still fails, capture the exact new error text** — the UI now surfaces the real exception instead of a generic message.
-3. **Add explicit debug UI if needed** — frame count, callback count, and landmark count would make browser-side diagnosis faster.
-4. **Optionally add world-space landmark output later** — `@mediapipe/pose` exposes `poseWorldLandmarks`, but `main` is currently only using screen-space landmarks.
-5. **Keep `main` minimal** — do not merge squat/gym/coach logic back unless explicitly requested.
+The system no longer tries to infer which exercise the user is doing.
+
+Instead:
+- the user chooses the exercise manually
+- the backend runs the analyzer for that exercise only
+
+Current analyzers in `web_pose_server.py`:
+
+- `analyze_squat`
+- `analyze_pushup`
+- `analyze_bicep_curl`
+- `analyze_overhead_press`
+- `analyze_situp`
+- `analyze_lunge`
+
+Each analyzer returns:
+- `exercise`
+- `exerciseLabel`
+- `stage`
+- `status`
+- `metrics`
+- `feedback` with `tone`, `title`, and `details`
+
+`tone` drives voice style and combo scoring:
+- `good` can continue combo chains
+- `warn` and `bad` trigger playful insult voice feedback in the one-rep flow
+- `neutral` is informational
 
 ---
 
-## How to resume work in a new chat
+## Camera startup behavior
 
-1. Read this file
-2. Read `README.md`
-3. Run `git log --oneline -10` to see recent commits
-4. Run `git status` to check for local changes
-5. Read `src/hooks/usePoseTracking.ts` — it contains the entire core logic
-6. If working with the old features, `git show temp:src/lib/feedback.ts` etc. to read files from the other branch without checking out
+The app uses `open_camera()` in `web_pose_server.py`.
+
+Current logic:
+- try indices `0`, `1`, `2`
+- on Windows, try `cv2.CAP_DSHOW` first
+- wait up to `CAMERA_WARMUP_FRAMES` reads for real frames
+- if all attempts fail, surface a concrete error string in the UI payload
+
+If the page still says `Searching for pose...`, that usually means the camera is running but no valid body landmarks are being found yet.
+
+---
+
+## Files worth reading first
+
+1. `web_pose_server.py`
+2. `README.md`
+3. `git log --oneline -10`
+4. `git status`
+
+Only read `src/` if the task is specifically about the older Vite tracker.
 
 ---
 
 ## Run commands
 
-```bash
-# Install dependencies
-npm install
+### Run the active Python app
 
-# Start dev server
-npm run dev
-# Open http://localhost:5173
-
-# Type check
-./node_modules/.bin/tsc --noEmit
-
-# Build for production
-npm run build
-
-# Lint
-npm run lint
+```cmd
+cd C:\Users\andre\Gym_bro
+.venv\Scripts\python.exe web_pose_server.py
 ```
+
+Optional voice:
+
+```cmd
+set ELEVENLABS_API_KEY=your_key_here
+.venv\Scripts\python.exe web_pose_server.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000/
+```
+
+### Syntax check
+
+```cmd
+.venv\Scripts\python.exe -m py_compile web_pose_server.py
+```
+
+### Older Vite app
+
+```bash
+npm install
+npm run dev
+```
+
+---
+
+## Resume checklist for a new chat
+
+1. Read this file
+2. Read `README.md`
+3. Run `git status`
+4. Run `git log --oneline -10`
+5. Read `web_pose_server.py`
+6. Ignore the older `src/` app unless the user explicitly asks about it
