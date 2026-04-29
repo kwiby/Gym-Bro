@@ -66,7 +66,7 @@ export function drawPose(
     const from = landmarks[start]
     const to = landmarks[end]
 
-    if (!isLandmarkVisible(from, 0.2) || !isLandmarkVisible(to, 0.2)) {
+    if (!isLandmarkVisible(from, 0.1) || !isLandmarkVisible(to, 0.1)) {
       continue
     }
 
@@ -78,7 +78,7 @@ export function drawPose(
   }
 
   for (const landmark of landmarks) {
-    if (!isLandmarkVisible(landmark, 0.15)) {
+    if (!isLandmarkVisible(landmark, 0.1)) {
       continue
     }
 
@@ -87,7 +87,7 @@ export function drawPose(
     const radius = Math.max(5, width * 0.007)
 
     ctx.fillStyle =
-      (landmark.visibility ?? 0) >= 0.5
+      (landmark.visibility ?? 1) >= 0.5
         ? 'rgba(247, 250, 252, 0.98)'
         : 'rgba(255, 196, 107, 0.9)'
 
@@ -144,7 +144,7 @@ export function isLandmarkVisible(
     landmark &&
       Number.isFinite(landmark.x) &&
       Number.isFinite(landmark.y) &&
-      (landmark.visibility ?? 0) >= minimumVisibility,
+      (landmark.visibility ?? 1) >= minimumVisibility,
   )
 }
 
@@ -161,7 +161,7 @@ function averageVisibility(landmarks: PoseLandmark[], indices: number[]) {
     return 0
   }
 
-  const total = visibleLandmarks.reduce((sum, lm) => sum + (lm.visibility ?? 0), 0)
+  const total = visibleLandmarks.reduce((sum, lm) => sum + (lm.visibility ?? 1), 0)
 
   return total / visibleLandmarks.length
 }
