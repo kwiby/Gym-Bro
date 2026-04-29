@@ -77,10 +77,10 @@ function analyzeSquat(landmarks: NormalizedLandmark[]): ExerciseAnalysis {
   ]
 
   if (
-    !isLandmarkVisible(shoulder) ||
-    !isLandmarkVisible(hip) ||
-    !isLandmarkVisible(knee) ||
-    !isLandmarkVisible(ankle)
+    !isLandmarkVisible(shoulder, 0.3) ||
+    !isLandmarkVisible(hip, 0.3) ||
+    !isLandmarkVisible(knee, 0.3) ||
+    !isLandmarkVisible(ankle, 0.3)
   ) {
     return createNoPoseAnalysis('squat')
   }
@@ -153,11 +153,11 @@ function analyzePushup(landmarks: NormalizedLandmark[]): ExerciseAnalysis {
   ]
 
   if (
-    !isLandmarkVisible(shoulder) ||
-    !isLandmarkVisible(elbow) ||
-    !isLandmarkVisible(wrist) ||
-    !isLandmarkVisible(hip) ||
-    !isLandmarkVisible(ankle)
+    !isLandmarkVisible(shoulder, 0.3) ||
+    !isLandmarkVisible(elbow, 0.3) ||
+    !isLandmarkVisible(wrist, 0.3) ||
+    !isLandmarkVisible(hip, 0.3) ||
+    !isLandmarkVisible(ankle, 0.3)
   ) {
     return createNoPoseAnalysis('pushup')
   }

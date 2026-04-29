@@ -49,7 +49,7 @@ export function drawPose(
     const from = landmarks[connection.start]
     const to = landmarks[connection.end]
 
-    if (!isLandmarkVisible(from) || !isLandmarkVisible(to)) {
+    if (!isLandmarkVisible(from, 0.2) || !isLandmarkVisible(to, 0.2)) {
       continue
     }
 
@@ -60,7 +60,7 @@ export function drawPose(
   }
 
   for (const landmark of landmarks) {
-    if (!isLandmarkVisible(landmark, 0.45)) {
+    if (!isLandmarkVisible(landmark, 0.15)) {
       continue
     }
 

@@ -9,11 +9,12 @@ import {
   type ExerciseAnalysis,
   type ExerciseType,
 } from './lib/feedback'
-import { drawPose } from './lib/pose'
+import { drawPose, isLandmarkVisible } from './lib/pose'
 
+const MEDIAPIPE_VERSION = '0.10.35'
 const MODEL_ASSET_PATH =
-  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task'
-const WASM_ASSET_PATH = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
+  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
+const WASM_ASSET_PATH = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`
 
 type ModelStatus = 'loading' | 'ready' | 'error'
 type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
@@ -25,6 +26,7 @@ function App() {
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const isLoopRunningRef = useRef(false)
+  const lastVideoTimeRef = useRef(-1)
   const repBottomReachedRef = useRef(false)
   const selectedExerciseRef = useRef<ExerciseType>('squat')
   const spokenCueRef = useRef<{ text: string; at: number }>({ text: '', at: 0 })
@@ -37,6 +39,8 @@ function App() {
   const [audioEnabled, setAudioEnabled] = useState(true)
   const [repCount, setRepCount] = useState(0)
   const [analysis, setAnalysis] = useState<ExerciseAnalysis>(createNoPoseAnalysis('squat'))
+  const [landmarkCount, setLandmarkCount] = useState(0)
+  const [poseVisible, setPoseVisible] = useState(false)
 
   useEffect(() => {
     selectedExerciseRef.current = selectedExercise
@@ -141,8 +145,10 @@ function App() {
       }
 
       video.srcObject = stream
+      video.autoplay = true
       await video.play()
 
+      lastVideoTimeRef.current = -1
       setCameraStatus('live')
       startProcessingLoop()
     } catch (error) {
@@ -163,6 +169,7 @@ function App() {
 
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
+    lastVideoTimeRef.current = -1
 
     if (videoRef.current) {
       videoRef.current.pause()
@@ -178,6 +185,8 @@ function App() {
 
     setCameraStatus('idle')
     setAnalysis(createNoPoseAnalysis(selectedExerciseRef.current))
+    setLandmarkCount(0)
+    setPoseVisible(false)
     window.speechSynthesis?.cancel()
   }
 
@@ -202,6 +211,13 @@ function App() {
         return
       }
 
+      if (video.currentTime === lastVideoTimeRef.current) {
+        animationFrameRef.current = requestAnimationFrame(processFrame)
+        return
+      }
+
+      lastVideoTimeRef.current = video.currentTime
+
       if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
         canvas.width = video.videoWidth
         canvas.height = video.videoHeight
@@ -214,13 +230,16 @@ function App() {
         return
       }
 
-      const result = poseLandmarker.detectForVideo(video, performance.now())
+      const result = poseLandmarker.detectForVideo(video, video.currentTime * 1000)
       const landmarks = result.landmarks[0]
+      const visibleCount = landmarks?.filter((landmark) => isLandmarkVisible(landmark, 0.15)).length ?? 0
 
       drawPose(context, landmarks, canvas.width, canvas.height)
 
       const nextAnalysis = analyzeExercise(selectedExerciseRef.current, landmarks)
       handleRepCounting(nextAnalysis)
+      setLandmarkCount(visibleCount)
+      setPoseVisible(visibleCount >= 8)
       setAnalysis(nextAnalysis)
 
       animationFrameRef.current = requestAnimationFrame(processFrame)
@@ -250,6 +269,8 @@ function App() {
     repBottomReachedRef.current = false
     setSelectedExercise(exercise)
     setRepCount(0)
+    setLandmarkCount(0)
+    setPoseVisible(false)
     setAnalysis(createNoPoseAnalysis(exercise))
   }
 
@@ -341,6 +362,16 @@ function App() {
             <article className="status-card compact">
               <span className="label">Phase</span>
               <strong>{analysis.stage}</strong>
+            </article>
+
+            <article className="status-card compact">
+              <span className="label">Pose</span>
+              <strong>{poseVisible ? 'detected' : 'searching'}</strong>
+            </article>
+
+            <article className="status-card compact">
+              <span className="label">Landmarks</span>
+              <strong>{landmarkCount}</strong>
             </article>
           </div>
 
