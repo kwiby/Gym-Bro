@@ -257,7 +257,12 @@ export function usePoseTracking() {
       const canvas   = canvasRef.current
       const lmarker  = landmarkerRef.current
 
-      if (!video || !canvas || !lmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+      if (!video || !canvas || !lmarker) return
+
+      // Guard: dimensions must be non-zero before detection is valid
+      if (video.videoWidth === 0 || video.videoHeight === 0) return
+
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
       if (video.currentTime === lastVideoTimeRef.current) return
       lastVideoTimeRef.current = video.currentTime
 
@@ -322,8 +327,19 @@ export function usePoseTracking() {
 
       const video = videoRef.current
       if (!video) throw new Error('Video element not mounted')
+
       video.srcObject = stream
-      video.autoplay  = true
+      video.muted     = true
+      video.playsInline = true
+
+      // Wait for the browser to report actual video dimensions before
+      // starting the loop. play() resolving is not enough — videoWidth
+      // can still be 0 until loadedmetadata fires.
+      await new Promise<void>((resolve, reject) => {
+        video.onloadedmetadata = () => resolve()
+        video.onerror = () => reject(new Error('Video metadata failed to load'))
+      })
+
       await video.play()
 
       lastVideoTimeRef.current = -1
