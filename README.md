@@ -1,3 +1,5 @@
+![Gym Bro Icon](https://github.com/AndrewLu-1/Gym_bro/blob/main/Gym%20Bro%20Icon.png)
+
 # Gym Bro
 
 While working out, have you ever felt that your form had less structural integrity than a piece of wet toast? Well, worry no more for we have a solution, Gym Bro!
