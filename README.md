@@ -1,6 +1,8 @@
-![Gym Bro Icon](https://github.com/AndrewLu-1/Gym_bro/blob/main/Gym%20Bro%20Icon.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/AndrewLu-1/Gym_bro/main/Gym%20Bro%20Icon.png" width="300" />
+</p>
 
-# Gym Bro
+# Gym Bro - A [ConHacks 2026](https://conhacks.io/) Hackathon Project
 
 While working out, have you ever felt that your form had less structural integrity than a piece of wet toast? Well, worry no more for we have a solution, Gym Bro!
 
