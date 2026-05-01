@@ -25,7 +25,7 @@ Gym Bro is a workout coaching website that uses your webcam to analyze your work
 - MediaPipe pose landmarker for pose tracking.
 - Python http.server for the local web server.
 - HTML/CSS/JavaScript for the browser UI.
-- **ElevenLabs** text-to-speech for voice live coaching.
+- **ElevenLabs** text-to-speech for live voice coaching.
 
 **Architecture:**
 - Python manages the webcam and pose processing.
